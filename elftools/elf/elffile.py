@@ -12,11 +12,19 @@ from ..common.utils import struct_parse, elf_assert
 from ..construct import ConstructError
 from .structs import ELFStructs
 from .sections import (
-        Section, StringTableSection, SymbolTableSection, NullSection)
+        Section, StringTableSection, SymbolTableSection, NullSection,
+        SymbolTableSectionEdit)#, StringTableSectionEdit)
 from .relocation import RelocationSection, RelocationHandler
 from .segments import Segment, InterpSegment
 from .enums import ENUM_RELOC_TYPE_i386, ENUM_RELOC_TYPE_x64
 from ..dwarf.dwarfinfo import DWARFInfo, DebugSectionDescriptor, DwarfConfig
+from StringIO import StringIO
+from random import randint
+from os import system
+
+def randomFile():
+    name = '/tmp/tmpfile' + str(randint(10000,99999))
+    return (name, open(name,'w'))
 
 
 class ELFFile(object):
@@ -301,3 +309,71 @@ class ELFFile(object):
                 size=section['sh_size'])
 
 
+class NormELFFile(ELFFile):
+    """ Same as ELFFile but will enforce the existence of two sections:
+        .symtab and .strtab
+    """
+    
+    def __init__(self, stream):
+        stream.seek(0,2)
+        self.sz = stream.tell()
+        stream.seek(0)
+        fname, f = randomFile()
+        f.write(stream.read())
+        f.close()
+        self.stream = open(fname)
+        self.symtab = None
+        self.normalize()
+        super(NormELFFile, self).__init__(self.stream)
+        self.symtab = SymbolTableSectionEdit(
+            self,
+            self.get_section_by_name('.symtab'))
+        #self.strtab = SymbolTableSectionEdit(
+        #self.strtab = self.get_section_by_name('.strtab')
+
+
+    def normalize(self):
+        self.stream.seek(0)
+        f = ELFFile(self.stream)
+        if not f.get_section_by_name('.strtab'):
+            self._addSectionHeader('.strtab')
+            
+        if not f.get_section_by_name('.symtab'):
+            self._addSectionHeader('.symtab')
+
+        # TODO - we are assuming that if they exists
+        # they'll be always in the end of the file
+
+    def save(self, fname):
+        self.symtab.fix_header()
+        #self.strtab.fix_header()
+        self.stream.seek(0)
+        out = open(fname,"w")
+        out.write(self.stream.read(self['e_shoff']))
+        self.stream.read(self['e_shnum']*self['e_shentsize'])
+        pos = self.stream.tell()
+        for sh in self.iter_sections():
+            if sh.name == '.symtab':
+                header = self.symtab.header
+            #elif sh.name == '.strtab':
+            #    header = self.strtab.header
+            else:
+                header = sh.header
+            self.structs.Elf_Shdr.build_stream(header, out)
+        self.stream.seek(pos)
+        out.write(self.symtab.data())
+        #out.write(self.strtab.data())
+        out.close()
+
+
+    def _addSectionHeader(self, sectionname):
+        dummyname, dummy = randomFile()
+        dummy.close()
+        dumpname, dump = randomFile()
+        self.stream.seek(0)
+        dump.write(self.stream.read())
+        dump.close()
+        system('objcopy --add-section %s=%s %s' % (sectionname, dummyname, dumpname))
+        self.stream = open(dumpname)
+        
+        

@@ -1,1 +1,7 @@
-bla bla
+This is an academic project which consists in creating an user interface to recreate/edit the Symbol Table of a binary file in the Elf format.
+
+It may be used to help debug or reverse engineer stripped binaries.
+
+It's being built on top of the pyelftools library created by Eli Bendersky and which can be found at https://bitbucket.org/eliben/pyelftools
+
+
