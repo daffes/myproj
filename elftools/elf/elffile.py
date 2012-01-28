@@ -13,7 +13,7 @@ from ..construct import ConstructError
 from .structs import ELFStructs
 from .sections import (
     Section, StringTableSection, SymbolTableSection, NullSection,
-    SymbolTableSectionEdit)#, StringTableSectionEdit)
+    SymbolTableSectionEdit, StringTableSectionEdit)
 from .relocation import RelocationSection, RelocationHandler
 from .segments import Segment, InterpSegment
 from .enums import ENUM_RELOC_TYPE_i386, ENUM_RELOC_TYPE_x64
@@ -314,24 +314,40 @@ class NormELFFile(ELFFile):
     """
     
     def __init__(self, stream):
-        stream.seek(0,2)
-        self.sz = stream.tell()
+        # Copy the stream
         stream.seek(0)
         fname, f = randomFile()
         f.write(stream.read())
         f.close()
         self.stream = open(fname)
-        self.symtab = None
-        self.normalize()
+
+        # Possibly add .symtab and .strtab sections
+        self.normalizeSections()
         super(NormELFFile, self).__init__(self.stream)
+
         self.symtab = SymbolTableSectionEdit(
-            self,
             self.get_section_by_name('.symtab'))
-        #self.strtab = SymbolTableSectionEdit(
-        #self.strtab = self.get_section_by_name('.strtab')
+        self.strtab = StringTableSectionEdit(
+            self.get_section_by_name('.strtab'))
 
+        self.setOffset()
 
-    def normalize(self):
+    def setOffset(self):
+        # Get the file size
+
+        self.stream.seek(0,2)
+        self.sz = self.stream.tell()
+        
+        if (self.symtab['sh_offset'] + self.symtab['sh_size'] \
+                != self.strtab['sh_offset']) \
+                or \
+                (self.strtab['sh_offset'] + self.strtab['sh_size'] != self.sz):
+            self.offset = self.sz
+        
+        else:
+            self.offset = self.symtab['sh_offset']
+
+    def normalizeSections(self):
         self.stream.seek(0)
         f = ELFFile(self.stream)
         if not f.get_section_by_name('.strtab'):
@@ -339,31 +355,10 @@ class NormELFFile(ELFFile):
             
         if not f.get_section_by_name('.symtab'):
             self._addSectionHeader('.symtab')
-
+        
+        
         # TODO - we are assuming that if they exists
         # they'll be always in the end of the file
-
-    def save(self, fname):
-        self.symtab.fix_header()
-        #self.strtab.fix_header()
-        self.stream.seek(0)
-        out = open(fname,"w")
-        out.write(self.stream.read(self['e_shoff']))
-        self.stream.read(self['e_shnum']*self['e_shentsize'])
-        pos = self.stream.tell()
-        for sh in self.iter_sections():
-            if sh.name == '.symtab':
-                header = self.symtab.header
-            #elif sh.name == '.strtab':
-            #    header = self.strtab.header
-            else:
-                header = sh.header
-            self.structs.Elf_Shdr.build_stream(header, out)
-        self.stream.seek(pos)
-        out.write(self.symtab.data())
-        #out.write(self.strtab.data())
-        out.close()
-
 
     def _addSectionHeader(self, sectionname):
         dummyname, dummy = randomFile()
@@ -374,3 +369,27 @@ class NormELFFile(ELFFile):
         dump.close()
         system('objcopy --add-section %s=%s %s' % (sectionname, dummyname, dumpname))
         self.stream = open(dumpname)
+
+    def save(self, fname):
+        self.symtab.fix_header(self.offset)
+        self.strtab.fix_header(self.symtab['sh_offset'] 
+                               + self.symtab['sh_size'])
+        self.stream.seek(0)
+        out = open(fname,"w")
+        out.write(self.stream.read(self['e_shoff']))
+        self.stream.read(self['e_shnum']*self['e_shentsize'])
+        pos = self.stream.tell()
+        for sh in self.iter_sections():
+            if sh.name == '.symtab':
+                header = self.symtab.header
+            elif sh.name == '.strtab':
+                header = self.strtab.header
+            else:
+                header = sh.header
+            self.structs.Elf_Shdr.build_stream(header, out)
+        self.stream.seek(pos)
+        out.write(self.symtab.data())
+        out.write(self.strtab.data())
+        out.close()
+
+
