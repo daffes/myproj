@@ -2,7 +2,21 @@ This is an academic project which consists in creating an user interface to recr
 
 It may be used to help debug or reverse engineer stripped binaries.
 
-It's being built on top of the pyelftools library created by Eli Bendersky and which can be found at https://bitbucket.org/eliben/pyelftools
+It's being built on top of the pyelftools library created by Eli Bendersky and which can be found at https://bitbucket.org/eliben/pyelftools. This library can parse all the elf information of a file. The ideia is to add functionalities to modify and write back the modified Symbol table.
 
-Take a look in example.py
+Example:
 
+gcc simple.c -o simple
+strip simple
+python example.py simple out (can't change inplace for now)
+gdb out
+   break main
+   break f
+   run
+   step until the end...
+
+The two addresses hardcoded in example.py are
+based on a 32bits compilation.
+You may need to fix those addresses by those 
+found in the command "readelf -s simple"
+before stripping the file
