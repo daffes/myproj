@@ -76,6 +76,10 @@ class StringTableSectionEdit(StringTableSection):
     def __init__(self, string_table_section):
         self.header = string_table_section.header
         self.table = string_table_section.data()
+
+        # Should start with a null char
+        if len(self.table) == 0:
+            self.table += '\0'
         
     def get_string(self, offset):
         """ Get the string stored at the given offset in this string table.
@@ -83,7 +87,9 @@ class StringTableSectionEdit(StringTableSection):
         return self.table[offset:self.table.find('\0', offset)]
 
     def add_string(self, s):
+        offset = len(self.table)
         self.table += s + '\0'
+        return offset
 
     def data(self):
         return self.table
@@ -138,23 +144,71 @@ class SymbolTableSectionEdit(SymbolTableSection):
     def __init__(self, symboltable):
         self.elffile = symboltable.elffile
         self.elfstructs = self.elffile.structs
-        self.stringtable = None
 
         self.symbols = []
         self.header = symboltable.header
         if symboltable['sh_size'] > 0:
             for sym in symboltable.iter_symbols():
                 self.symbols.append(sym)
-                #self.stringtable = stringtable
+        else:
+            # Create default 0 Entry
+            st_info_container = Container(
+                bind = 'STB_LOCAL'
+                )
+            st_info_container.type = 'STT_NOTYPE'
+            
+            entry = Container(
+                st_name = 0,
+                st_info = st_info_container,
+                st_other = Container(visibility = 'STV_DEFAULT'),
+                st_shndx = 'SHN_UNDEF',
+                st_value = 0,
+                st_size = 0 # FIX-ME
+                )
+            self.symbols.append(Symbol(entry, ''))
 
         #elf_assert(self['sh_entsize'] > 0,
         #        'Expected entry size of section %s to be > 0' % name)
         #elf_assert(self['sh_size'] % self['sh_entsize'] == 0,
         #        'Expected section size to be a multiple of entry size in section %s' % name)
+    def add_symbol(self, name, value):
+        # HACK for 'type' reserved name
+        st_info_container = Container(
+            bind = 'STB_GLOBAL'
+            )
+        st_info_container.type = 'STT_FUNC'
 
+        entry = Container(
+            st_name = -1,
+            st_info = st_info_container,
+            st_other = Container(visibility = 'STV_DEFAULT'),
+            st_shndx = -1,
+            st_value = value,
+            st_size = 0 # FIX-ME
+            )
+        
+        self.symbols.append(Symbol(entry, name))
+        
+    def push_symbols_names(self, string_table):
+        for i, sec in enumerate(self.elffile.iter_sections()):
+            if sec.name == '.text':
+                text_index = i
+                break
+        
+        for sym in self.symbols:
+            if sym['st_name'] == -1:
+                sym.entry['st_name'] = string_table.add_string(sym.name)
+            if sym['st_shndx'] == -1:
+                sym.entry['st_shndx'] = text_index
+            
     def fix_header(self, offset):
         self.header['sh_type'] = 'SHT_SYMTAB'
         self.header['sh_offset'] = offset
+
+        # sh_entsize Is the size of a Symbol
+        # This is out of order because will be used next
+        self.header['sh_entsize'] = self.elfstructs.Elf_Sym.sizeof()
+
         self.header['sh_size'] = self['sh_entsize'] * self.num_symbols()
         
         # sh_link should contain the index of the string session
@@ -165,21 +219,19 @@ class SymbolTableSectionEdit(SymbolTableSection):
 
         # sh_info should contain the index of the first
         # non local symbol
-        self.header['st_info'] = 0
+        self.header['sh_info'] = 0
         for sym in self.symbols:
-            if sym['st_name'] != 'STB_LOCAL':
+            if sym.entry['st_info']['bind'] != 'STB_LOCAL':
                 break
-            self.header['st_info'] += 1
+            self.header['sh_info'] += 1
         
         # addralign I don't really know, but I guess it's the number
         # of bytes for each field FIX-ME
         for subcon in self.elfstructs.Elf_Shdr.subcons:
             if subcon.name == 'sh_addralign':
-                self.header['sh_addralign'] = subcon.sizeof()
-
-        # sh_entsize Is the size of a Symbol
-        self.header['sh_entsize'] = self.elfstructs.Elf_Sym.sizeof()
-            
+                self.header['sh_addralign'] = subcon.sizeof()        
+                            
+    
     def num_symbols(self):
         """ Number of symbols in the table
         """

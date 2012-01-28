@@ -373,6 +373,7 @@ class NormELFFile(ELFFile):
     def save(self, fname):
         # Update the Headers
         self.symtab.fix_header(self.offset)
+        self.symtab.push_symbols_names(self.strtab)
         self.strtab.fix_header(self.symtab['sh_offset'] 
                                + self.symtab['sh_size'])
 
