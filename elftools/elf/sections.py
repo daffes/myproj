@@ -70,7 +70,6 @@ class StringTableSection(Section):
             self.stream,
             stream_pos=table_offset + offset)
 
-
 class SymbolTableSection(Section):
     """ ELF symbol table section. Has an associated StringTableSection that's
         passed in the constructor.
