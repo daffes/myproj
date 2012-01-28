@@ -4,4 +4,5 @@ It may be used to help debug or reverse engineer stripped binaries.
 
 It's being built on top of the pyelftools library created by Eli Bendersky and which can be found at https://bitbucket.org/eliben/pyelftools
 
+Take a look in example.py
 
