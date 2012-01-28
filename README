@@ -9,6 +9,7 @@ Example:
 gcc simple.c -o simple
 strip simple
 python example.py simple out (can't change inplace for now)
+chmod +x out
 gdb out
    break main
    break f

@@ -1,15 +1,3 @@
-# gcc simple.c -o simple
-# strip simple
-# python example.py simple out (can't change inplace for now)
-# gdb out
-#    break main
-#    break f
-#    run
-#    step until the end...
-# The two addresses are hardcoded based on a 32bits compilation
-# You may need to fix those addresses by those found
-# in the command "readelf -s simple" before stripping the file
-
 from elftools.elf.elffile import NormELFFile
 import sys
 
