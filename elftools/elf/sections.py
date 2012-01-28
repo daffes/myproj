@@ -70,6 +70,28 @@ class StringTableSection(Section):
             self.stream,
             stream_pos=table_offset + offset)
 
+class StringTableSectionEdit(StringTableSection):
+    """ ELF editable string table section.
+    """
+    def __init__(self, string_table_section):
+        self.header = string_table_section.header
+        self.table = string_table_section.data()
+        
+    def get_string(self, offset):
+        """ Get the string stored at the given offset in this string table.
+        """
+        return self.table[offset:self.table.find('\0', offset)]
+
+    def add_string(self, s):
+        self.table += s + '\0'
+
+    def data(self):
+        return self.table
+
+    def fix_header(self, offset):
+        self.header['sh_offset'] = offset
+        self.header['sh_size'] = len(self.table)
+        
 class SymbolTableSection(Section):
     """ ELF symbol table section. Has an associated StringTableSection that's
         passed in the constructor.
@@ -113,17 +135,16 @@ class SymbolTableSectionEdit(SymbolTableSection):
     """ ELF symbol table section. Has an associated StringTableSection that's
         passed in the constructor.
     """
-    def __init__(self, elffile, symboltable):
-        self.elffile = elffile
+    def __init__(self, symboltable):
+        self.elffile = symboltable.elffile
         self.elfstructs = self.elffile.structs
         self.stringtable = None
 
         self.symbols = []
-        if symboltable:
-            self.header = symboltable.header
-            if symboltable['sh_size'] > 0:
-                for sym in symboltable.iter_symbols():
-                    self.symbols.append(sym)
+        self.header = symboltable.header
+        if symboltable['sh_size'] > 0:
+            for sym in symboltable.iter_symbols():
+                self.symbols.append(sym)
                 #self.stringtable = stringtable
 
         #elf_assert(self['sh_entsize'] > 0,
@@ -131,11 +152,9 @@ class SymbolTableSectionEdit(SymbolTableSection):
         #elf_assert(self['sh_size'] % self['sh_entsize'] == 0,
         #        'Expected section size to be a multiple of entry size in section %s' % name)
 
-    def fix_header(self):
+    def fix_header(self, offset):
         self.header['sh_type'] = 'SHT_SYMTAB'
-        if self.header['sh_offset'] == 0:
-            self.header['sh_offset'] = self.elffile.sz
-        self.header['sh_offset'] = 0 # FIX-ME
+        self.header['sh_offset'] = offset
         self.header['sh_size'] = self['sh_entsize'] * self.num_symbols()
         
         # sh_link should contain the index of the string session
