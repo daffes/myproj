@@ -12,12 +12,13 @@ from ..common.utils import struct_parse, elf_assert
 from ..construct import ConstructError
 from .structs import ELFStructs
 from .sections import (
-        Section, StringTableSection, SymbolTableSection, NullSection,
-        SymbolTableSectionEdit)#, StringTableSectionEdit)
+    Section, StringTableSection, SymbolTableSection, NullSection,
+    SymbolTableSectionEdit)#, StringTableSectionEdit)
 from .relocation import RelocationSection, RelocationHandler
 from .segments import Segment, InterpSegment
 from .enums import ENUM_RELOC_TYPE_i386, ENUM_RELOC_TYPE_x64
 from ..dwarf.dwarfinfo import DWARFInfo, DebugSectionDescriptor, DwarfConfig
+
 from StringIO import StringIO
 from random import randint
 from os import system
@@ -25,7 +26,6 @@ from os import system
 def randomFile():
     name = '/tmp/tmpfile' + str(randint(10000,99999))
     return (name, open(name,'w'))
-
 
 class ELFFile(object):
     """ Creation: the constructor accepts a stream (file-like object) with the
@@ -308,7 +308,6 @@ class ELFFile(object):
                 global_offset=section['sh_offset'],
                 size=section['sh_size'])
 
-
 class NormELFFile(ELFFile):
     """ Same as ELFFile but will enforce the existence of two sections:
         .symtab and .strtab
@@ -375,5 +374,3 @@ class NormELFFile(ELFFile):
         dump.close()
         system('objcopy --add-section %s=%s %s' % (sectionname, dummyname, dumpname))
         self.stream = open(dumpname)
-        
-        
