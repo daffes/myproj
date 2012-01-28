@@ -371,14 +371,22 @@ class NormELFFile(ELFFile):
         self.stream = open(dumpname)
 
     def save(self, fname):
+        # Update the Headers
         self.symtab.fix_header(self.offset)
         self.strtab.fix_header(self.symtab['sh_offset'] 
                                + self.symtab['sh_size'])
-        self.stream.seek(0)
+
+        # Open the output file and copy everything
+        # until the section header without changing it
         out = open(fname,"w")
+        self.stream.seek(0)
         out.write(self.stream.read(self['e_shoff']))
-        self.stream.read(self['e_shnum']*self['e_shentsize'])
-        pos = self.stream.tell()
+
+        # Write the sections Headers replacing the
+        # one from .symtab and .strtab for the updated
+        # ones
+        self.stream.read(self['e_shnum'] * self['e_shentsize'])
+        
         for sh in self.iter_sections():
             if sh.name == '.symtab':
                 header = self.symtab.header
@@ -387,7 +395,14 @@ class NormELFFile(ELFFile):
             else:
                 header = sh.header
             self.structs.Elf_Shdr.build_stream(header, out)
-        self.stream.seek(pos)
+
+        # Copy anything between the end of the section Header
+        # And the beginning of the symbol table
+            self.stream.seek(self['e_shoff'] \
+                                 + self['e_shnum'] * self['e_shentsize'])
+        out.write(self.stream.read(self.offset - self.stream.tell()))
+
+        # Write the Symbol and the String table
         out.write(self.symtab.data())
         out.write(self.strtab.data())
         out.close()
