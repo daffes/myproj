@@ -179,16 +179,29 @@ class SymbolTableSectionEdit(SymbolTableSection):
         st_info_container.type = 'STT_FUNC'
 
         entry = Container(
-            st_name = -1,
+            st_name = -1, # -1 is just a mark to be replaced later
             st_info = st_info_container,
             st_other = Container(visibility = 'STV_DEFAULT'),
-            st_shndx = -1,
+            st_shndx = -1, # -1 is just a mark to be replaced later
             st_value = value,
             st_size = 0 # FIX-ME
             )
         
         self.symbols.append(Symbol(entry, name))
-        
+    
+    def remove_symbol(self, n):
+        # FIX-ME also delete the entry in the string table
+        return self.symbols.pop(n)
+
+    def edit_symbol(self, n, name=None, value=None):
+        # FIX-ME also delete the entry in the string table
+        if name != None:
+            self.symbols[n].name = name
+            self.symbols[n].entry['st_name'] = -1
+            
+        if value != None:
+            self.symbols[n].entry['st_value'] = value
+
     def push_symbols_names(self, string_table):
         for i, sec in enumerate(self.elffile.iter_sections()):
             if sec.name == '.text':
@@ -230,7 +243,7 @@ class SymbolTableSectionEdit(SymbolTableSection):
         for subcon in self.elfstructs.Elf_Shdr.subcons:
             if subcon.name == 'sh_addralign':
                 self.header['sh_addralign'] = subcon.sizeof()        
-                            
+                break
     
     def num_symbols(self):
         """ Number of symbols in the table

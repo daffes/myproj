@@ -386,8 +386,6 @@ class NormELFFile(ELFFile):
         # Write the sections Headers replacing the
         # one from .symtab and .strtab for the updated
         # ones
-        self.stream.read(self['e_shnum'] * self['e_shentsize'])
-        
         for sh in self.iter_sections():
             if sh.name == '.symtab':
                 header = self.symtab.header
@@ -399,8 +397,9 @@ class NormELFFile(ELFFile):
 
         # Copy anything between the end of the section Header
         # And the beginning of the symbol table
-            self.stream.seek(self['e_shoff'] \
-                                 + self['e_shnum'] * self['e_shentsize'])
+        self.stream.seek(self['e_shoff'] \
+                             + self['e_shnum'] * self['e_shentsize'])
+
         out.write(self.stream.read(self.offset - self.stream.tell()))
 
         # Write the Symbol and the String table
