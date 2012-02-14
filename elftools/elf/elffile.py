@@ -23,9 +23,9 @@ from StringIO import StringIO
 from random import randint
 from os import system
 
-def randomFile():
-    name = '/tmp/tmpfile' + str(randint(10000,99999))
-    return (name, open(name,'w'))
+# def randomFile():
+#    name = '/tmp/tmpfile' + str(randint(10000,99999))
+#    return (name, open(name,'w'))
 
 class ELFFile(object):
     """ Creation: the constructor accepts a stream (file-like object) with the
@@ -60,6 +60,8 @@ class ELFFile(object):
         self.e_ident_raw = self.stream.read(16)
         
         self._file_stringtable_section = self._get_file_stringtable()
+        self._file_stringtable_section.name = self._get_section_name(self._file_stringtable_section.header)
+
         self._section_name_map = None
     
     def num_sections(self):
@@ -314,97 +316,148 @@ class NormELFFile(ELFFile):
     """
     
     def __init__(self, stream):
-        # Copy the stream
-        stream.seek(0)
-        fname, f = randomFile()
-        f.write(stream.read())
-        f.close()
-        self.stream = open(fname)
-
-        # Possibly add .symtab and .strtab sections
-        self.normalizeSections()
+        self.stream = stream
+        self._new_sections = []
+        self._edit_sections = []
         super(NormELFFile, self).__init__(self.stream)
-
-        self.symtab = SymbolTableSectionEdit(
-            self.get_section_by_name('.symtab'))
-        self.strtab = StringTableSectionEdit(
-            self.get_section_by_name('.strtab'))
-
-        self.setOffset()
-
-    def setOffset(self):
-        # Get the file size
-
         self.stream.seek(0,2)
-        self.sz = self.stream.tell()
-        
-        if (self.symtab['sh_offset'] + self.symtab['sh_size'] \
-                != self.strtab['sh_offset']) \
-                or \
-                (self.strtab['sh_offset'] + self.strtab['sh_size'] != self.sz):
-            self.offset = self.sz
-        
+        self.size = self.stream.tell()
+
+        self._normal = self._check_normal()
+        self._shstrtab = StringTableSectionEdit(self, self._file_stringtable_section)
+        self._file_stringtable_section = self._shstrtab
+
+        self._edit_sections = [self._shstrtab,]
+        self._load_edit_sections()
+
+        if self._normal == True:
+            self.offset = self._shstrtab['sh_offset']
         else:
-            self.offset = self.symtab['sh_offset']
+            self.offset = self.size
 
-    def normalizeSections(self):
-        self.stream.seek(0)
-        f = ELFFile(self.stream)
-        if not f.get_section_by_name('.strtab'):
-            self._addSectionHeader('.strtab')
-            
-        if not f.get_section_by_name('.symtab'):
-            self._addSectionHeader('.symtab')
-        
-        
-        # TODO - we are assuming that if they exists
-        # they'll be always in the end of the file
+    def _check_normal(self):
+        # check that shstrtab preceedes section headers
+        off = self._file_stringtable_section['sh_offset'] \
+            + self._file_stringtable_section['sh_size']
+        off = (off+7)/8*8 # FIX-ME
+        assert off == self['e_shoff']
+        off += self['e_shentsize'] * self['e_shnum']
 
-    def _addSectionHeader(self, sectionname):
-        dummyname, dummy = randomFile()
-        dummy.close()
-        dumpname, dump = randomFile()
-        self.stream.seek(0)
-        dump.write(self.stream.read())
-        dump.close()
-        system('objcopy --add-section %s=%s %s' % (sectionname, dummyname, dumpname))
-        self.stream = open(dumpname)
+        # Check for anything between section headers and symtab
+        symtab = self.get_section_by_name('.symtab')
+        if symtab != None:
+            if off != symtab['sh_offset']:
+                return False
+            off += symtab['sh_size']
+        
+        # Check for anything between symtab and strtab
+        strtab = self.get_section_by_name('.strtab')
+        if strtab != None:
+            if off != strtab['sh_offset']:
+                return False
+            off += strtab['sh_size']
+        
+        # Check for anything else in the end
+        if off != self.size:
+            return False
+        return True
+
+    def _load_edit_sections(self):
+        if self.get_section_by_name('.symtab'):
+            self._symtab = SymbolTableSectionEdit(
+                self, self.get_section_by_name('.symtab'))           
+        else:
+            self._symtab = self._add_section(SymbolTableSectionEdit(self))
+
+        if self.get_section_by_name('.strtab'):
+            self._strtab = StringTableSectionEdit(
+                self, self.get_section_by_name('.strtab'))
+        else:
+            self._strtab = self._add_section(StringTableSectionEdit(self))
+
+        self._edit_sections.extend([self._symtab, self._strtab])
+
+
+    def _add_section(self, section):
+        # Invalidate any name mapping
+        self._section_name_map = None
+        
+        # Make sure there isn't a section with the same name
+        assert self.get_section_by_name(section.name) == None
+
+        # Add the string in the shstrtab
+        section.header['sh_name'] = self._shstrtab.add_string(section.name)
+
+        # Remember the new section
+        self._new_sections.append(section)
+        self._edit_sections.append(section)
+        return section
 
     def save(self, fname):
         # Update the Headers
-        self.symtab.fix_header(self.offset)
-        self.symtab.push_symbols_names(self.strtab)
-        self.strtab.fix_header(self.symtab['sh_offset'] 
-                               + self.symtab['sh_size'])
+        # Update session string table header
+        off = self._shstrtab.fix_header(self.offset)
+        off = (off+7)/8*8
 
-        # Open the output file and copy everything
-        # until the section header without changing it
+        # Can't update the self header as it may break
+        # iterating in the sections
+        eh = self._parse_elf_header()
+        eh['e_shnum'] = self.num_sections()
+        eh['e_shoff'] = off
+        off += eh['e_shnum'] * eh['e_shentsize']
+
+        # Update Symbol Table header
+        off = self._symtab.fix_header(off)
+
+
+        # Push the symbols to string table and update it's header
+        self._symtab.push_symbols_names(self._strtab)
+        self._strtab.fix_header(self._symtab['sh_offset'] 
+                               + self._symtab['sh_size'])
+
+        # Open the output file
         out = open(fname,"w")
-        self.stream.seek(0)
-        out.write(self.stream.read(self['e_shoff']))
 
-        # Write the sections Headers replacing the
-        # one from .symtab and .strtab for the updated
-        # ones
-        for sh in self.iter_sections():
-            if sh.name == '.symtab':
-                header = self.symtab.header
-            elif sh.name == '.strtab':
-                header = self.strtab.header
-            else:
-                header = sh.header
-            self.structs.Elf_Shdr.build_stream(header, out)
+        # Write the elf header
+        self.structs.Elf_Ehdr.build_stream(eh, out)
 
-        # Copy anything between the end of the section Header
-        # And the beginning of the symbol table
-        self.stream.seek(self['e_shoff'] \
-                             + self['e_shnum'] * self['e_shentsize'])
+        # copy everything until the section string table 
+        self.stream.seek(self['e_ehsize'])
+        out.write(self.stream.read(self.offset - self['e_ehsize']))
 
-        out.write(self.stream.read(self.offset - self.stream.tell()))
+        # Write the section string table
+        out.write(self._shstrtab.data())
+        while (out.tell()%8 != 0):
+            out.write('\0')
+        
+        # Write the sections Headers replacing editable ones
+        for sec in self.iter_sections():
+            self.structs.Elf_Shdr.build_stream(sec.header, out)
 
-        # Write the Symbol and the String table
-        out.write(self.symtab.data())
-        out.write(self.strtab.data())
+        # Finally write the Symbol and the String table
+        out.write(self._symtab.data())
+        out.write(self._strtab.data())
         out.close()
 
+
+    # Overwrite a few methods to make it consistent
+    # with editable and new sections
+    def num_sections(self):
+        """ Number of sections in the file
+        """
+        return self['e_shnum'] + len(self._new_sections)
+    
+    def get_section(self, n):
+        """ Get the section at index #n from the file (Section object or a
+            subclass)
+        """
+        if (n < self['e_shnum']):
+            section = super(NormELFFile,self).get_section(n)
+            for esec in self._edit_sections:
+                if esec.name == section.name:
+                    section = esec
+                    break
+        else:
+            section = self._new_sections[n - self['e_shnum']]
+        return section
 

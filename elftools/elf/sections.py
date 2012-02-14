@@ -73,10 +73,17 @@ class StringTableSection(Section):
 class StringTableSectionEdit(StringTableSection):
     """ ELF editable string table section.
     """
-    def __init__(self, string_table_section):
-        self.header = string_table_section.header
-        self.table = string_table_section.data()
-
+    def __init__(self, elffile, string_table_section=None, name='.strtab'):
+        self.elffile = elffile
+        if string_table_section:
+            self.header = string_table_section.header
+            self.table = string_table_section.data()
+            self.name = string_table_section.name
+        else:
+            self.header = self.build_header()
+            self.table = ''
+            self.name = name
+            
         # Should start with a null char
         if len(self.table) == 0:
             self.table += '\0'
@@ -94,9 +101,23 @@ class StringTableSectionEdit(StringTableSection):
     def data(self):
         return self.table
 
+    def build_header(self):
+        return Container(
+            sh_name = 0,
+            sh_type = 'SHT_STRTAB',
+            sh_flags = 0,
+            sh_addr = 0,
+            sh_offset = 0,
+            sh_size = 0,
+            sh_link = 0,
+            sh_info = 0,
+            sh_addralign = 1,
+            sh_entsize = 0) # FIX-ME
+
     def fix_header(self, offset):
         self.header['sh_offset'] = offset
         self.header['sh_size'] = len(self.table)
+        return offset + self['sh_size']
         
 class SymbolTableSection(Section):
     """ ELF symbol table section. Has an associated StringTableSection that's
@@ -141,16 +162,14 @@ class SymbolTableSectionEdit(SymbolTableSection):
     """ ELF symbol table section. Has an associated StringTableSection that's
         passed in the constructor.
     """
-    def __init__(self, symboltable):
-        self.elffile = symboltable.elffile
+    def __init__(self, elffile, symboltable=None, name='.symtab'):
+        self.elffile = elffile
         self.elfstructs = self.elffile.structs
-
         self.symbols = []
-        self.header = symboltable.header
-        if symboltable['sh_size'] > 0:
-            for sym in symboltable.iter_symbols():
-                self.symbols.append(sym)
-        else:
+
+        if not symboltable:
+            self.header = self.build_header()
+            self.name = '.symtab'
             # Create default 0 Entry
             st_info_container = Container(
                 bind = 'STB_LOCAL'
@@ -167,10 +186,13 @@ class SymbolTableSectionEdit(SymbolTableSection):
                 )
             self.symbols.append(Symbol(entry, ''))
 
-        #elf_assert(self['sh_entsize'] > 0,
-        #        'Expected entry size of section %s to be > 0' % name)
-        #elf_assert(self['sh_size'] % self['sh_entsize'] == 0,
-        #        'Expected section size to be a multiple of entry size in section %s' % name)
+        else:
+            self.name = symboltable.name
+            self.header = symboltable.header
+            if symboltable['sh_size'] > 0:
+                for sym in symboltable.iter_symbols():
+                    self.symbols.append(sym)
+
     def add_symbol(self, name, value):
         # HACK for 'type' reserved name
         st_info_container = Container(
@@ -214,14 +236,26 @@ class SymbolTableSectionEdit(SymbolTableSection):
             if sym['st_shndx'] == -1:
                 sym.entry['st_shndx'] = text_index
             
+
+    def build_header(self):
+        return Container(
+            sh_name = 0,
+            sh_type = 'SHT_SYMTAB',
+            sh_flags = 0,
+            sh_addr = 0,
+            sh_offset = 0,
+            sh_size = 0,
+            sh_link = 0,
+            sh_info = 0,
+            sh_addralign = 8,
+            sh_entsize = self.elfstructs.Elf_Sym.sizeof()) # FIX-ME
+            
+
     def fix_header(self, offset):
-        self.header['sh_type'] = 'SHT_SYMTAB'
         self.header['sh_offset'] = offset
 
-        # sh_entsize Is the size of a Symbol
+        # sh_entsize is the size of a Symbol
         # This is out of order because will be used next
-        self.header['sh_entsize'] = self.elfstructs.Elf_Sym.sizeof()
-
         self.header['sh_size'] = self['sh_entsize'] * self.num_symbols()
         
         # sh_link should contain the index of the string session
@@ -244,6 +278,8 @@ class SymbolTableSectionEdit(SymbolTableSection):
             if subcon.name == 'sh_addralign':
                 self.header['sh_addralign'] = subcon.sizeof()        
                 break
+        
+        return offset + self.header['sh_size']
     
     def num_symbols(self):
         """ Number of symbols in the table
