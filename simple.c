@@ -1,5 +1,9 @@
+int a = 2;
+
 void f() {
-  printf("OEE\n");
+  printf("A\n");
+  a = 3;
+  printf("B\n");
 }
 
 int main() {

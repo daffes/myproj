@@ -13,7 +13,7 @@ from ..construct import ConstructError
 from .structs import ELFStructs
 from .sections import (
     Section, StringTableSection, SymbolTableSection, NullSection,
-    SymbolTableSectionEdit, StringTableSectionEdit)
+    SymbolTableSectionEdit, StringTableSectionEdit, Symbol)
 from .relocation import RelocationSection, RelocationHandler
 from .segments import Segment, InterpSegment
 from .enums import ENUM_RELOC_TYPE_i386, ENUM_RELOC_TYPE_x64
@@ -22,10 +22,7 @@ from ..dwarf.dwarfinfo import DWARFInfo, DebugSectionDescriptor, DwarfConfig
 from StringIO import StringIO
 from random import randint
 from os import system
-
-# def randomFile():
-#    name = '/tmp/tmpfile' + str(randint(10000,99999))
-#    return (name, open(name,'w'))
+from io import BytesIO
 
 class ELFFile(object):
     """ Creation: the constructor accepts a stream (file-like object) with the
@@ -310,20 +307,22 @@ class ELFFile(object):
                 global_offset=section['sh_offset'],
                 size=section['sh_size'])
 
-class NormELFFile(ELFFile):
+class ELFFileEdit(ELFFile):
     """ Same as ELFFile but will enforce the existence of two sections:
         .symtab and .strtab
     """
     
-    def __init__(self, stream):
-        self.stream = stream
+    def __init__(self, stream, A=[]):
+        stream.seek(0)
+        self.stream = BytesIO()
+        self.stream.write(stream.read())
         self._new_sections = []
         self._edit_sections = []
-        super(NormELFFile, self).__init__(self.stream)
+        super(ELFFileEdit, self).__init__(self.stream)
         self.stream.seek(0,2)
         self.size = self.stream.tell()
 
-        self._normal = self._check_normal()
+        self._normal = self._check_normal(A)
         self._shstrtab = StringTableSectionEdit(self, self._file_stringtable_section)
         self._file_stringtable_section = self._shstrtab
 
@@ -335,18 +334,22 @@ class NormELFFile(ELFFile):
         else:
             self.offset = self.size
 
-    def _check_normal(self):
+    def _check_normal(self, A=[]):
         # check that shstrtab preceedes section headers
         off = self._file_stringtable_section['sh_offset'] \
             + self._file_stringtable_section['sh_size']
-        off = (off+7)/8*8 # FIX-ME
-        assert off == self['e_shoff']
+        k = self.elfclass/8
+        off = (off+k-1)/k*k # FIX-ME
+        if off != self['e_shoff']:
+            A[0] = 0
+            return False
         off += self['e_shentsize'] * self['e_shnum']
 
         # Check for anything between section headers and symtab
         symtab = self.get_section_by_name('.symtab')
         if symtab != None:
             if off != symtab['sh_offset']:
+                A[0] = 1
                 return False
             off += symtab['sh_size']
         
@@ -354,11 +357,13 @@ class NormELFFile(ELFFile):
         strtab = self.get_section_by_name('.strtab')
         if strtab != None:
             if off != strtab['sh_offset']:
+                A[0] = 2
                 return False
             off += strtab['sh_size']
         
         # Check for anything else in the end
         if off != self.size:
+            A[0] = 3
             return False
         return True
 
@@ -397,7 +402,10 @@ class NormELFFile(ELFFile):
         # Update the Headers
         # Update session string table header
         off = self._shstrtab.fix_header(self.offset)
-        off = (off+7)/8*8
+        
+        # align address
+        k = self.elfclass/8
+        off = (off+k-1)/k*k
 
         # Can't update the self header as it may break
         # iterating in the sections
@@ -427,7 +435,7 @@ class NormELFFile(ELFFile):
 
         # Write the section string table
         out.write(self._shstrtab.data())
-        while (out.tell()%8 != 0):
+        while (out.tell()%(self.elfclass/8) != 0):
             out.write('\0')
         
         # Write the sections Headers replacing editable ones
@@ -439,6 +447,31 @@ class NormELFFile(ELFFile):
         out.write(self._strtab.data())
         out.close()
 
+    # Symbol editing methods, basically wrappers over 
+    # SymbolTableSectionEdit
+    def create_symbol(self, name='', value=0, bind='STB_GLOBAL', stype='STT_FUNC', sname='.text', size=0, visibility='STV_DEFAULT', add=True):
+        sym = Symbol(name, value, bind, stype, sname, size, visibility)
+        if add:
+            self.add_symbol(sym)
+        return sym
+
+    def add_symbol(self, sym):
+        self._symtab.add_symbol(sym)
+
+    def iter_symbols(self):
+        return self._symtab.iter_symbols()
+
+    def get_symbol(self, n):
+        return self._symtab.get_symbol(n)
+
+    def get_symbol_by_name(self, name):
+        return self._symtab.get_symbol_by_name(name)
+
+    def remove_symbol(self, n):
+        return self._symtab.remove_symbol(n)
+
+    def remove_symbol_by_name(self, name):
+        return self._symtab.remove_symbol_by_name(name)
 
     # Overwrite a few methods to make it consistent
     # with editable and new sections
@@ -452,7 +485,7 @@ class NormELFFile(ELFFile):
             subclass)
         """
         if (n < self['e_shnum']):
-            section = super(NormELFFile,self).get_section(n)
+            section = super(ELFFileEdit,self).get_section(n)
             for esec in self._edit_sections:
                 if esec.name == section.name:
                     section = esec
@@ -460,4 +493,3 @@ class NormELFFile(ELFFile):
         else:
             section = self._new_sections[n - self['e_shnum']]
         return section
-
