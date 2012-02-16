@@ -26,23 +26,28 @@ class ELFFileEdit(ELFFile):
         # Call parent constructor
         super(ELFFileEdit, self).__init__(self.stream)
         self._file_stringtable_section.name = self._get_section_name(self._file_stringtable_section.header)
-
+        
         # Control of new and editable sections
         self._new_sections = []
         self._edit_sections = []
+
+        self.stream.seek(0,2)
+        self.size = self.stream.tell()
+        self._normal = self._check_normal()
+
         self._load_edit_sections()
 
         # Set the writting offset 
         # If the file is considered to be "normal" it will be the offset
         # of the shstrtab section, if not it's the end of the file
-        self.stream.seek(0,2)
-        self.size = self.stream.tell()
-        if self._check_normal() == True:
+        if self._normal:
             self.offset = self._shstrtab['sh_offset']
         else:
             self.offset = self.size
 
     def get_section_name_map(self):
+        if self._section_name_map == None:
+            self.get_section_by_name('')
         return deepcopy(self._section_name_map)
 
     def save(self, fname):
@@ -119,6 +124,10 @@ class ELFFileEdit(ELFFile):
         """ Iterate over all the symbols of the symbol table """
         return self._symtab.iter_symbols()
 
+    def num_symbols(self):
+        """ Get a symbol by it's index """
+        return self._symtab.num_symbols()
+
     def get_symbol(self, n):
         """ Get a symbol by it's index """
         return self._symtab.get_symbol(n)
@@ -183,7 +192,7 @@ class ELFFileEdit(ELFFile):
             if off != symtab['sh_offset']:
                 return False
             off += symtab['sh_size']
-        
+
         # Check for anything between symtab and strtab
         strtab = self.get_section_by_name('.strtab')
         if strtab != None:

@@ -102,6 +102,7 @@ class SymbolTableSectionEdit(SymbolTableSection):
         self.elffile = elffile
         self.elfstructs = self.elffile.structs
         self.symbols = []
+        self.sec_map = self.elffile.get_section_name_map()
 
         if not symboltable:
             self.header = self._build_header()
@@ -123,7 +124,9 @@ class SymbolTableSectionEdit(SymbolTableSection):
             self.header = symboltable.header
             if symboltable['sh_size'] > 0:
                 for sym in symboltable.iter_symbols():
-                    self.symbols.append(SymbolEdit(symbol=sym))
+                    syme = SymbolEdit(symbol=sym)
+                    syme.install_section(self.sec_map)
+                    self.symbols.append(syme)
 
     def fix_header(self, offset):
         """ Make the symbol table consistent for saving.
@@ -157,10 +160,9 @@ class SymbolTableSectionEdit(SymbolTableSection):
         # Force creation of the mapping: section name to index 
         self.elffile.get_section_by_name('') 
         # Install the section in every symbol
-        section_name_map = self.elffile.get_section_name_map()
 
         for sym in self.symbols:
-            sym.install_section(section_name_map)
+            sym.install_section(self.sec_map)
 
         self._push_symbols_names(self.elffile.get_section_by_name('.strtab'))
 
@@ -168,6 +170,7 @@ class SymbolTableSectionEdit(SymbolTableSection):
 
     def add_symbol(self, sym):
         """ Add a symbol object to the end of the table """
+        
         self.symbols.append(sym)
     
     def num_symbols(self):
@@ -251,19 +254,23 @@ class SymbolEdit(Symbol):
                 
 
     def __str__(self):
-        return ('%s: %s\n') % (self.name, self.entry)
+        return ('%s (%s): %s\n') % (self.name, self.sname, self.entry)
 
     def install_section(self, section_map):
         """ Update the index of the referenced section.
         It receives a dictionary mapping names to indexes.
         If name equals to None it will map to SHN_UNDEF.
-        If Symbol has not received a section name, i.e. was loaded with the file
-        and not changed during the execution of the program, just keep it.
         """
+        if self.entry['st_shndx'] == 'SHN_ABS':
+            return
         if self.sname == None:
             self.entry['st_shndx'] = 'SHN_UNDEF'
         elif self.sname != -1:
             self.entry['st_shndx'] = section_map[self.sname]
+        else:
+            for k,v in section_map.items():
+                if v == self.entry['st_shndx']:
+                    self.set_section(k)
         
     def set_name(self, name):
         """ Change Symbol name """
@@ -318,11 +325,11 @@ class SymbolEdit(Symbol):
 
     def set_size(self, size):
         """ Set size """
-        self.entry['size'] = size
+        self.entry['st_size'] = size
 
     def get_size(self):
         """ Get size """
-        return self.entry['size']
+        return self.entry['st_size']
         
     def _build_entry(self):
         """ Builds a default empty entry
