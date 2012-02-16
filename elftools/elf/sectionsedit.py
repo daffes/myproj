@@ -15,8 +15,7 @@ from .sections import (
     StringTableSection, SymbolTableSection, Symbol)
 
 class StringTableSectionEdit(StringTableSection):
-    """ ELF editable string table section.
-    """
+    """ ELF editable string table section. """
     def __init__(self, elffile, string_table_section=None, name='.strtab'):
         self.marker = "\0\0__%MaRkeR$"
         self.marked = False
@@ -67,6 +66,14 @@ class StringTableSectionEdit(StringTableSection):
             self.table += s + '\0'
         return off
 
+    def fix_header(self, offset):
+        """ Make the string table consistent for saving.
+        Receives it's offset and returns the offset of it's end
+        """
+        self.header['sh_offset'] = offset
+        self.header['sh_size'] = len(self.table)
+        return offset + self['sh_size']
+
     def data(self):
         """ Return the binary representation of the data, in this case
         it's just the string table 
@@ -87,19 +94,10 @@ class StringTableSectionEdit(StringTableSection):
             sh_addralign = 1,
             sh_entsize = 0)
 
-    def fix_header(self, offset):
-        """ Make the string table consistent for saving.
-        Receives it's offset and returns the offset of it's end
-        """
-        self.header['sh_offset'] = offset
-        self.header['sh_size'] = len(self.table)
-        return offset + self['sh_size']
-
 
 class SymbolTableSectionEdit(SymbolTableSection):
-    """ ELF symbol table section. Has an associated StringTableSection that's
-        passed in the constructor.
-    """
+    """ ELF editable Symbol table section. """
+
     def __init__(self, elffile, symboltable=None, name='.symtab'):
         self.elffile = elffile
         self.elfstructs = self.elffile.structs
@@ -127,28 +125,6 @@ class SymbolTableSectionEdit(SymbolTableSection):
                 for sym in symboltable.iter_symbols():
                     self.symbols.append(SymbolEdit(symbol=sym))
 
-    def push_symbols_names(self, string_table):
-        """ Save the symbol names in a string table """
-        off = string_table.controlled()
-        for sym in self.symbols:
-            # Only update the name for created or controlled symbols
-            if sym['st_name'] == 0 or sym['st_name'] >= off:
-                sym.entry['st_name'] = string_table.add_string(sym.name)
-            
-    def _build_header(self):
-        """ Builds an empty header """
-        return Container(
-            sh_name = 0,
-            sh_type = 'SHT_SYMTAB',
-            sh_flags = 0,
-            sh_addr = 0,
-            sh_offset = 0,
-            sh_size = 0,
-            sh_link = 0,
-            sh_info = 0,
-            sh_addralign = self.elffile.elfclass/8,
-            sh_entsize = self.elfstructs.Elf_Sym.sizeof())
-    
     def fix_header(self, offset):
         """ Make the symbol table consistent for saving.
         Receives it's offset and returns the offset of it's end
@@ -181,8 +157,12 @@ class SymbolTableSectionEdit(SymbolTableSection):
         # Force creation of the mapping: section name to index 
         self.elffile.get_section_by_name('') 
         # Install the section in every symbol
+        section_name_map = self.elffile.get_section_name_map()
+
         for sym in self.symbols:
-            sym.install_section(self.elffile._section_name_map)
+            sym.install_section(section_name_map)
+
+        self._push_symbols_names(self.elffile.get_section_by_name('.strtab'))
 
         return offset + self.header['sh_size']
 
@@ -206,13 +186,14 @@ class SymbolTableSectionEdit(SymbolTableSection):
 
     def remove_symbol(self, n):
         """ Remove symbol given an index, indexes are refreshed after each use """
+        assert n > 0
         return self.symbols.pop(n)
 
     def remove_symbol_by_name(self, name):
         """ Remove symbol given a name """
-        for i, sym in enumerate(self.symbols):
+        for i, sym in enumerate(self.symbols[1:]):
             if sym.name == name:
-                return self.remove_symbol(i)    
+                return self.remove_symbol(i+1)
 
     def data(self):
         """ Get the binary representation of the symbol table """
@@ -222,14 +203,35 @@ class SymbolTableSectionEdit(SymbolTableSection):
             d += self.elfstructs.Elf_Sym.build(sym.entry)
         return d
 
+    def _push_symbols_names(self, string_table):
+        """ Save the symbol names in a string table """
+        off = string_table.controlled()
+        for sym in self.symbols:
+            # Only update the name for created or controlled symbols
+            if sym['st_name'] == 0 or sym['st_name'] >= off:
+                sym.entry['st_name'] = string_table.add_string(sym.name)
+
+    def _build_header(self):
+        """ Builds an empty header """
+        return Container(
+            sh_name = 0,
+            sh_type = 'SHT_SYMTAB',
+            sh_flags = 0,
+            sh_addr = 0,
+            sh_offset = 0,
+            sh_size = 0,
+            sh_link = 0,
+            sh_info = 0,
+            sh_addralign = self.elffile.elfclass/8,
+            sh_entsize = self.elfstructs.Elf_Sym.sizeof())
+
 class SymbolEdit(Symbol):
     """ Symbol Edit object - representing a single symbol entry from a symbol table
         section.
 
-        Similarly to Section objects, allows dictionary-like access to the
-        symbol entry.
-
         Similarly to Symbol but add editting functionality
+
+        Should be editted through the setters and getters.
     """
     def __init__(self, name='', value=0, bind='STB_GLOBAL', stype='STT_FUNC', sname='.text', size=0, visibility='STV_DEFAULT', symbol=None):
         if symbol != None:
