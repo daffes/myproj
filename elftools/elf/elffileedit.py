@@ -11,13 +11,13 @@ from io import BytesIO
 from .elffile import ELFFile
 from .sectionsedit import (
     SymbolTableSectionEdit, StringTableSectionEdit, SymbolEdit)
+from copy import deepcopy
 
 class ELFFileEdit(ELFFile):
-    """ Same as ELFFile but will enforce the existence of two sections:
-        .symtab and .strtab
+    """ 
     """
     
-    def __init__(self, stream, A=[0]):
+    def __init__(self, stream):
         # Create a copy of the stream
         stream.seek(0)
         self.stream = BytesIO()
@@ -37,90 +37,13 @@ class ELFFileEdit(ELFFile):
         # of the shstrtab section, if not it's the end of the file
         self.stream.seek(0,2)
         self.size = self.stream.tell()
-        if self._check_normal(A) == True:
+        if self._check_normal() == True:
             self.offset = self._shstrtab['sh_offset']
         else:
             self.offset = self.size
 
-    def _check_normal(self, A=[]):
-        """ Check if the file is considered to be in the normal format
-        A normal format is caracterized by having:
-        section string table, sections headers, symbol table, string table
-        In this order, without anything between them (except addr alignment)
-        and with the string table reaching the end of the file
-        """
-        # check that shstrtab preceedes section headers
-        off = self._file_stringtable_section['sh_offset'] \
-            + self._file_stringtable_section['sh_size']
-        k = self.elfclass/8
-        off = (off+k-1)/k*k # FIX-ME
-        if off != self['e_shoff']:
-            A[0] = 0
-            return False
-        off += self['e_shentsize'] * self['e_shnum']
-
-        # Check for anything between section headers and symtab
-        symtab = self.get_section_by_name('.symtab')
-        if symtab != None:
-            if off != symtab['sh_offset']:
-                A[0] = 1
-                return False
-            off += symtab['sh_size']
-        
-        # Check for anything between symtab and strtab
-        strtab = self.get_section_by_name('.strtab')
-        if strtab != None:
-            if off != strtab['sh_offset']:
-                A[0] = 2
-                return False
-            off += strtab['sh_size']
-        
-        # Check for presence of anything else in the end
-        # This is the major cause of returning False
-        if off != self.size:
-            A[0] = 3
-            return False
-        return True
-
-    def _load_edit_sections(self):
-        """ Loads section string table, symbol table, and string table 
-        as editable sections. If the two lasts don't exist, create them.
-        """
-        # Stringtable section (contains sections names), always exists
-        # _file_stringtable_section is used to keep consistent with parent class
-        self._shstrtab = StringTableSectionEdit(self, self._file_stringtable_section)
-        self._file_stringtable_section = self._shstrtab
-        self._edit_sections = [self._shstrtab,]
-
-        # Symbol table, load/create
-        if self.get_section_by_name('.symtab'):
-            self._symtab = SymbolTableSectionEdit(
-                self, self.get_section_by_name('.symtab'))           
-        else:
-            self._symtab = self._add_section(SymbolTableSectionEdit(self))
-
-        # String table, load/create
-        if self.get_section_by_name('.strtab'):
-            self._strtab = StringTableSectionEdit(
-                self, self.get_section_by_name('.strtab'))
-        else:
-            self._strtab = self._add_section(StringTableSectionEdit(self))
-
-        self._edit_sections.extend([self._strtab, self._symtab, self._strtab])
-
-
-    def _add_section(self, section):
-        """ Add a section object to the file """
-        assert self.get_section_by_name(section.name) == None
-
-        # Reset section name mapping
-        self._section_name_map = None
-
-        # Add the string in the shstrtab and update the offset in the header
-        section.header['sh_name'] = self._shstrtab.add_string(section.name)
-
-        self._new_sections.append(section)
-        return section
+    def get_section_name_map(self):
+        return deepcopy(self._section_name_map)
 
     def save(self, fname):
         """ Creates a file fname with the updated information """
@@ -129,7 +52,7 @@ class ELFFileEdit(ELFFile):
    
         # align address 
         # not sure if this is needed, but it's like this in most binaries
-        k = self.elfclass/8 # FIX-ME
+        k = self.elfclass/8
         off = (off+k-1)/k*k
 
         # Create a copy and update the elf header
@@ -143,7 +66,6 @@ class ELFFileEdit(ELFFile):
         off = self._symtab.fix_header(off)
 
         # Push the symbols to string table and update it's header
-        self._symtab.push_symbols_names(self._strtab)
         self._strtab.fix_header(self._symtab['sh_offset'] 
                                + self._symtab['sh_size'])
         
@@ -234,4 +156,82 @@ class ELFFileEdit(ELFFile):
                     break
         else:
             section = self._new_sections[n - self['e_shnum']]
+        return section
+
+    #-------------------------------- PRIVATE --------------------------------#
+
+    def _check_normal(self):
+        """ Check if the file is considered to be in the normal format
+        A normal format is a file having:
+        section string table, sections headers, symbol table, string table
+        in this order, without anything between them (except addr alignment)
+        and with the string table reaching the end of the file
+        """
+        # check that shstrtab preceedes section headers
+        off = self._file_stringtable_section['sh_offset'] \
+            + self._file_stringtable_section['sh_size']
+        k = self.elfclass/8
+        off = (off+k-1)/k*k 
+        if off != self['e_shoff']:
+            return False
+        off += self['e_shentsize'] * self['e_shnum']
+
+        # Check for anything between section headers and symtab
+        symtab = self.get_section_by_name('.symtab')
+        if symtab != None:
+            if off != symtab['sh_offset']:
+                return False
+            off += symtab['sh_size']
+        
+        # Check for anything between symtab and strtab
+        strtab = self.get_section_by_name('.strtab')
+        if strtab != None:
+            if off != strtab['sh_offset']:
+                return False
+            off += strtab['sh_size']
+        
+        # Check for presence of anything else in the end
+        # This is the major cause of returning False
+        if off != self.size:
+            return False
+        return True
+
+    def _load_edit_sections(self):
+        """ Loads section string table, symbol table, and string table 
+        as editable sections. If the two lasts don't exist, create them.
+        """
+        # Stringtable section (contains sections names), always exists
+        # _file_stringtable_section is used to keep consistent with parent class
+        self._shstrtab = StringTableSectionEdit(self, self._file_stringtable_section)
+        self._file_stringtable_section = self._shstrtab
+        self._edit_sections = [self._shstrtab,]
+
+        # Symbol table, load/create
+        if self.get_section_by_name('.symtab'):
+            self._symtab = SymbolTableSectionEdit(
+                self, self.get_section_by_name('.symtab'))           
+        else:
+            self._symtab = self._add_section(SymbolTableSectionEdit(self))
+
+        # String table, load/create
+        if self.get_section_by_name('.strtab'):
+            self._strtab = StringTableSectionEdit(
+                self, self.get_section_by_name('.strtab'))
+        else:
+            self._strtab = self._add_section(StringTableSectionEdit(self))
+
+        self._edit_sections.extend([self._strtab, self._symtab, self._strtab])
+
+
+    def _add_section(self, section):
+        """ Add a section object to the file """
+        assert self.get_section_by_name(section.name) == None
+
+        # Reset section name mapping
+        self._section_name_map = None
+
+        # Add the string in the shstrtab and update the offset in the header
+        section.header['sh_name'] = self._shstrtab.add_string(section.name)
+
+        self._new_sections.append(section)
         return section

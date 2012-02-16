@@ -1,23 +1,142 @@
-This is an academic project which consists in creating an user interface to recreate/edit the Symbol Table of a binary file in the Elf format.
+This library aims to manipulate the symbol table of an elf binary and the main usage is to help debugging/reverse engineering of stripped binaries.
+It's hosted under https://github.com/daffes/myproj # FIX-ME
 
-It may be used to help debug or reverse engineer stripped binaries.
+It's built on top of the pyelftools library created by Eli Bendersky and which can be found at https://bitbucket.org/eliben/pyelftools. Pyelftools is a great library and very well documented. 
 
-It's being built on top of the pyelftools library created by Eli Bendersky and which can be found at https://bitbucket.org/eliben/pyelftools. This library can parse all the elf information of a file. The ideia is to add functionalities to modify and write back the modified Symbol table.
+Pyelftools can parse all the elf information of a file. This new library adds functionalities to edit a restrict set of sesions of the Elf file.
+The library can operate in 32 or 64 bits binaries independent of the platform it's running.
 
-Example:
+Index:
+1. Quick user guide
+   1.1 Simple examples
+2. Hacking user guide
+   2.1 ElfFILEEdit class
+   2.2 StringTableEdit class
+   2.3 SymbolTableEdit class
+   2.4 SymbolEdit class
 
-gcc simple.c -o simple
-strip simple
-python example.py simple out (can't change inplace for now)
-chmod +x out
-gdb out
-   break main
-   break f
-   run
-   step until the end...
+1. Quick user guide:
+Every class and method has a docstring associated to it, don't hesitate to use!
+Public methods are listed first in the classes, private methods are preceeded by '_'
+Direct access to headers are not safe, as they may be inconsistent until saving the file,
+so give preference to setters and getters methods when available.
 
-The two addresses hardcoded in example.py are
-based on a 32bits compilation.
-You may need to fix those addresses by those 
-found in the command "readelf -s simple"
-before stripping the file
+The library main interface is through the ELFFileEdit class (elftools/elf/elffileedit.py).
+
+1.1 Simple examples:
+importing:
+        from elftools.elf.elffileedit import ELFFileEdit
+
+Opening a file:
+        f = ELFFileEdit(open(file_name))
+
+Iterating over every symbol:
+        for symbol in f.iter_symbols():
+            print symbol
+
+Creating a symbol:
+        f.create_symbol(name, value, bind, stype, sname, size, visibility)
+
+        To add global function symbol:
+        f.create_symbol('f', 0xFFFF, 'STB_GLOBAL', 'STT_FUNC', '.text', 0, 'STV_DEFAULT')
+        or just
+        f.create_symbol('f', 0xFFF)
+
+        To add global variable symbol:
+        f.create_symbol('var', 0xFFFF, 'STB_GLOBAL', 'STT_OBJECT', '.text', 4, 'STV_DEFAULT')
+        or just
+        f.create_symbol('var', 0xFFF, type='STT_OBJECT', size=4)
+        ...
+
+Removing a symbol:
+       f.remove_symbol_by_name('f')
+       or
+       f.remove_symbol(index)
+
+Modifying a symbol:
+       sym = f.get_symbol_by_name('old_name')
+       sym.set_name('new_name')   
+       sym.set_bind('STB_LOCAL')
+
+Saving the edited file:
+       f.save('file_name')
+
+
+2. Hacking User Guide
+You should be reading this if your intentions are to have a deeper understaing of the library or intends to modify it.
+There are comments and docstrings over all the code which should help you in your task. Also feel free to e-mail me (davialcosta@gmail.com)
+in case you have any doubts. A good updated elf reference can be found at http://www.sco.com/developers/gabi/latest/contents.html
+
+2.1 ElfFILEEdit class (elf/elftools/elffileedit.py)
+As discussed in the Quick User guide, this class is the main interface of the library.
+For the user the main flow consists in: Load the file -> Modify the Symbol Table -> Save the modified file
+
+2.1.1 Loading the file
+      First is called the parent's ELFFile constructor, which can build the object representation of the file
+      If the file doesn't have a symbol or a string table it will create empty sections for them.
+      Check if the file is "normal" to set the writting offset. (further information below)
+      
+      Most of the sections will be loaded as read-only sections. Three sections are loaded as editable sections:
+      - Section string table section (normally .shstrtab), which holds the names of the sections
+      - Symbol table section (.symtab), wich holds the symbol table
+      - String table (.strtab), which holds the strings referred in the symbol table
+
+      From the _check_normal docstring we have:
+      - A normal format is a file having:
+        section string table, sections headers, symbol table, string table
+        in this order, without having anything between them (execept addr alignment)
+        and with the string table reaching the end of the file
+      The importance of a normal file is that we can modify the sections mentioned without messing with offsets in it, mainly
+      segment offsets in the program header, which aren't touched by this lib.
+      If the file is normal the writting offset will be set to the beginning of the section string table.
+      If the file is not normal the writting offset will be set to the end of the file and space will be wasted in order
+      to keep important offsets untouched. More information about this in the 2.1.2.
+
+2.1.2 Modifying the Symbol Table
+      Symbols can be added, removed or edited freely (except by the one in the index 0).
+      When a symbol reference is returned it may be directly editted, without having to remove and add it again.
+      Symbols can be added directly, using a SymbolEdit instance, or can be created with the create_symbol method
+      The string table is not touched in this phase.
+      Refer to 2.3 for further informatin
+
+2.1.3 Saving the file
+      The saving process basically writes an updated elf header, copies everything until the writting offset (as defined in 2.1.1 
+      from the original file, then writes the binary representation of the section string table, followed by the sections headers, 
+      followed by the binary representation of the symbol table and string table.
+      Note that if the file is not "normal", space will be wasted.
+      Before saving every header/entry is fixed. Every editable section must have the fix_header() method called before asking it's
+      binary representation (data() method) with the offset of it's beginning. fix_header() always return an offset to the end of
+      the section
+
+
+2.2 StringTableEdit class2.1 (elf/elftools/sectionsedit.py)
+     String tables are just an array of chars.
+     When adding a string to it, it will first check if the string is already present, if so it returns the offset of it's beginning.
+     If not it appends the string to the end.
+      
+     String tables can have a controlled state on. In this state a marker "\0\0__%MaRkeR$" is added to it, if not present already.
+     When called the method controlled(), the string table erases everything after the marker. It can do that because the object
+     which called this method guarantees that it has control of every symbol pointing to the region after the marker, and it will
+     rewrite their names in the push_symbols_names phase. Last, if a marker is the last thing on a string table it's not useful and
+     it is removed. Note that the usage of the marker allows edit/remove symbol names through independent executions of the program.
+
+2.3 SymbolTableEdit class (elf/elftools/sectionsedit.py)
+    Symbol tables will contain a list of SymbolEdit objects.
+    There is a special symbol that must be in the index 0 and that can't be modified.
+    Symbols may have incomplete information during the program execution.
+    The fix_header method is responsible for pushing every symbol name to the string table (push_symbols_names() method) and calling 
+    the install_section for each  symbol to update the section index in it's entry.
+    fix_header method also reorder symbols to put local symbols first. Verify the method comments for further information.
+    
+    Before writting the symbol names it's always call the controlled() method to the associated string_table
+
+2.4 SymbolEdit class (elf/elftools/sectionsedit.py)
+    This class has getters() and setters() for every symbol attribute. Direct access to the entry should not be used.
+    The important thing about it are the incomplete information it may have before getting it's binary data.
+    
+    Symbols must have an index to the section they refer to. If the symbols is loaded with the file it will
+    have it's index already set. If it's created by the lib a section name is passed instead. The install_section() method configure
+    correctly this index.
+    
+    Symbols must also have an index to the string table which contains it's name. If the symbol is created it will have the invalid
+    index 0. the SymbolTable class will be responsible for updating the symbol['st_name'] during the push_symbol_names() phase.
