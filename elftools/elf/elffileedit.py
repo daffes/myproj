@@ -165,7 +165,8 @@ class ELFFileEdit(ELFFile):
         A normal format is a file having:
         section string table, sections headers, symbol table, string table
         in this order, without anything between them (except addr alignment)
-        and with the string table reaching the end of the file
+        and with the string table reaching the end of the file. Symbol table
+        and/or string table may be absent.
         """
         # check that shstrtab preceedes section headers
         off = self._file_stringtable_section['sh_offset'] \

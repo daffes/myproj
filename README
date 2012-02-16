@@ -10,7 +10,7 @@ Index:
 1. Quick user guide
    1.1 Simple examples
 2. Hacking user guide
-   2.1 ElfFILEEdit class
+   2.1 ELFFILEEdit class
    2.2 StringTableEdit class
    2.3 SymbolTableEdit class
    2.4 SymbolEdit class
@@ -67,7 +67,7 @@ You should be reading this if your intentions are to have a deeper understaing o
 There are comments and docstrings over all the code which should help you in your task. Also feel free to e-mail me (davialcosta@gmail.com)
 in case you have any doubts. A good updated elf reference can be found at http://www.sco.com/developers/gabi/latest/contents.html
 
-2.1 ElfFILEEdit class (elf/elftools/elffileedit.py)
+2.1 ELFFILEEdit class (elf/elftools/elffileedit.py)
 As discussed in the Quick User guide, this class is the main interface of the library.
 For the user the main flow consists in: Load the file -> Modify the Symbol Table -> Save the modified file
 
@@ -85,13 +85,13 @@ For the user the main flow consists in: Load the file -> Modify the Symbol Table
       - A normal format is a file having:
         section string table, sections headers, symbol table, string table
         in this order, without having anything between them (execept addr alignment)
-        and with the string table reaching the end of the file
+        and with the string table reaching the end of the file. Symbol table and/or string table may be absent.
       The importance of a normal file is that we can modify the sections mentioned without messing with offsets in it, mainly
       segment offsets in the program header, which aren't touched by this lib.
       If the file is normal the writting offset will be set to the beginning of the section string table.
       If the file is not normal the writting offset will be set to the end of the file and space will be wasted in order
       to keep important offsets untouched. More information about this in the 2.1.2.
-
+      
 2.1.2 Modifying the Symbol Table
       Symbols can be added, removed or edited freely (except by the one in the index 0).
       When a symbol reference is returned it may be directly editted, without having to remove and add it again.
