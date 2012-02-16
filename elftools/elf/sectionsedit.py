@@ -22,12 +22,13 @@ class StringTableSectionEdit(StringTableSection):
         self.marked = False
         self.control = False
         self.elffile = elffile
+
         if string_table_section:
             self.header = string_table_section.header
             self.table = string_table_section.data()
             self.name = string_table_section.name
         else:
-            self.header = self.build_header()
+            self.header = self._build_header()
             self.table = ''
             self.name = name
             
@@ -41,6 +42,10 @@ class StringTableSectionEdit(StringTableSection):
         return self.table[offset:self.table.find('\0', offset)]
 
     def controlled(self):
+        """ Tell stringtable that it's under control, it means it can erase anything
+        after the marker as it will by rewritten by the controlling object.
+        The addition of the marker is lazy, it only adds it if it's needed
+        """ 
         self.control = True
         self.marked = False
         off = self.table.find(self.marker+'\0')
@@ -50,6 +55,9 @@ class StringTableSectionEdit(StringTableSection):
         return off
 
     def add_string(self, s):
+        """ Add a string to the table and return it's offset.
+        If the string is already inplace it will use it.
+        """
         off = self.table.find(s+'\0')
         if off == -1:
             if self.control and not self.marked:
@@ -60,9 +68,13 @@ class StringTableSectionEdit(StringTableSection):
         return off
 
     def data(self):
+        """ Return the binary representation of the data, in this case
+        it's just the string table 
+        """
         return self.table
 
-    def build_header(self):
+    def _build_header(self):
+        """ Builds an empty header """
         return Container(
             sh_name = 0,
             sh_type = 'SHT_STRTAB',
@@ -73,9 +85,12 @@ class StringTableSectionEdit(StringTableSection):
             sh_link = 0,
             sh_info = 0,
             sh_addralign = 1,
-            sh_entsize = 0) # FIX-ME
+            sh_entsize = 0)
 
     def fix_header(self, offset):
+        """ Make the string table consistent for saving.
+        Receives it's offset and returns the offset of it's end
+        """
         self.header['sh_offset'] = offset
         self.header['sh_size'] = len(self.table)
         return offset + self['sh_size']
@@ -91,7 +106,7 @@ class SymbolTableSectionEdit(SymbolTableSection):
         self.symbols = []
 
         if not symboltable:
-            self.header = self.build_header()
+            self.header = self._build_header()
             self.name = name
             
             # Create default 0 Entry
@@ -105,22 +120,23 @@ class SymbolTableSectionEdit(SymbolTableSection):
                 visibility='STV_DEFAULT'))
 
         else:
+            # Copy information/symbols from original table
             self.name = symboltable.name
             self.header = symboltable.header
             if symboltable['sh_size'] > 0:
                 for sym in symboltable.iter_symbols():
                     self.symbols.append(SymbolEdit(symbol=sym))
 
-    def add_symbol(self, sym):
-        self.symbols.append(sym)
-
     def push_symbols_names(self, string_table):
+        """ Save the symbol names in a string table """
         off = string_table.controlled()
         for sym in self.symbols:
+            # Only update the name for created or controlled symbols
             if sym['st_name'] == 0 or sym['st_name'] >= off:
                 sym.entry['st_name'] = string_table.add_string(sym.name)
             
-    def build_header(self):
+    def _build_header(self):
+        """ Builds an empty header """
         return Container(
             sh_name = 0,
             sh_type = 'SHT_SYMTAB',
@@ -134,10 +150,12 @@ class SymbolTableSectionEdit(SymbolTableSection):
             sh_entsize = self.elfstructs.Elf_Sym.sizeof())
     
     def fix_header(self, offset):
+        """ Make the symbol table consistent for saving.
+        Receives it's offset and returns the offset of it's end
+        """
         self.header['sh_offset'] = offset
         
         # sh_entsize is the size of a Symbol
-        # This is out of order because will be used next
         self.header['sh_size'] = self['sh_entsize'] * self.num_symbols()
         
         # sh_link should contain the index of the string session
@@ -146,7 +164,7 @@ class SymbolTableSectionEdit(SymbolTableSection):
                 self.header['sh_link'] = i
                 break
             
-        # Put local symbols first
+        # Local symbols must be showed first (stable sort)
         self.symbols.sort(
             key=lambda sym: \
                 0 if sym.entry['st_info']['bind'] == 'STB_LOCAL' \
@@ -160,35 +178,44 @@ class SymbolTableSectionEdit(SymbolTableSection):
                 break
             self.header['sh_info'] += 1
         
+        # Force creation of the mapping: section name to index 
+        self.elffile.get_section_by_name('') 
+        # Install the section in every symbol
+        for sym in self.symbols:
+            sym.install_section(self.elffile._section_name_map)
+
         return offset + self.header['sh_size']
+
+    def add_symbol(self, sym):
+        """ Add a symbol object to the end of the table """
+        self.symbols.append(sym)
     
     def num_symbols(self):
-        """ Number of symbols in the table
-        """
+        """ Number of symbols in the table """
         return len(self.symbols)
         
     def get_symbol(self, n):
-        """ Get the symbol at index #n from the table (Symbol object)
-        """
+        """ Get the symbol at index #n from the table (Symbol object) """
         return self.symbols[n]
 
     def get_symbol_by_name(self, name):
+        """ Get the symbol with name=name from the table (Symbol object) """
         for sym in self.symbols:
             if sym.name == name:
                 return sym
 
     def remove_symbol(self, n):
+        """ Remove symbol given an index, indexes are refreshed after each use """
         return self.symbols.pop(n)
 
     def remove_symbol_by_name(self, name):
+        """ Remove symbol given a name """
         for i, sym in enumerate(self.symbols):
             if sym.name == name:
                 return self.remove_symbol(i)    
 
     def data(self):
-        # Force creation of the section name to index map
-        self.elffile.get_section_by_name('')
-        
+        """ Get the binary representation of the symbol table """
         d = ''
         for sym in self.symbols:
             sym.install_section(self.elffile._section_name_map)
@@ -196,11 +223,13 @@ class SymbolTableSectionEdit(SymbolTableSection):
         return d
 
 class SymbolEdit(Symbol):
-    """ FIX-ME Symbol object - representing a single symbol entry from a symbol table
+    """ Symbol Edit object - representing a single symbol entry from a symbol table
         section.
 
         Similarly to Section objects, allows dictionary-like access to the
         symbol entry.
+
+        Similarly to Symbol but add editting functionality
     """
     def __init__(self, name='', value=0, bind='STB_GLOBAL', stype='STT_FUNC', sname='.text', size=0, visibility='STV_DEFAULT', symbol=None):
         if symbol != None:
@@ -223,57 +252,80 @@ class SymbolEdit(Symbol):
         return ('%s: %s\n') % (self.name, self.entry)
 
     def install_section(self, section_map):
+        """ Update the index of the referenced section.
+        It receives a dictionary mapping names to indexes.
+        If name equals to None it will map to SHN_UNDEF.
+        If Symbol has not received a section name, i.e. was loaded with the file
+        and not changed during the execution of the program, just keep it.
+        """
         if self.sname == None:
             self.entry['st_shndx'] = 'SHN_UNDEF'
         elif self.sname != -1:
             self.entry['st_shndx'] = section_map[self.sname]
         
     def set_name(self, name):
+        """ Change Symbol name """
         self.name = name
 
     def get_name(self):
+        """ Get Symbol name """
         return self.name
 
     def set_bind(self, bind):
+        """ Set binding, refer to ENUM_ST_INFO_BIND """
         assert bind in ENUM_ST_INFO_BIND
         self.entry['st_info']['bind'] = bind
         
     def get_bind(self):
+        """ Get binding, refer to ENUM_ST_INFO_BIND """
         return self.entry['st_info']['bind']
 
     def set_type(self, stype):
+        """ Set type, refer to ENUM_ST_INFO_TYPE """
         assert stype in ENUM_ST_INFO_TYPE
         self.entry['st_info']['type'] = stype
 
     def get_type(self):
+        """ Get type, refer to ENUM_ST_INFO_TYPE """
         return self.entry['st_info']['type']
 
     def set_visibility(self, vis):
+        """ Set visibility, refer to ENUM_ST_VISIBILITY """
         assert vis in ENUM_ST_VISIBILITY
         self.entry['st_other']['visibility'] = vis
     
     def get_visibility(self):
+        """ Get visibility, refer to ENUM_ST_VISIBILITY """
         return self.entry['st_other']['visibility']
     
     def set_section(self, sname):
+        """ Set the section name referenced by the symbol """
         self.sname = sname
 
     def get_section(self):
+        """ Get the section name referenced by the symbol """
         return self.sname
         
     def set_value(self, value):
+        """ Set value """
         self.entry['st_value'] = value
 
     def get_value(self):
+        """ Get value """
         return self.entry['st_value']
 
     def set_size(self, size):
+        """ Set size """
         self.entry['size'] = size
 
     def get_size(self):
+        """ Get size """
         return self.entry['size']
         
     def _build_entry(self):
+        """ Builds a default empty entry
+        Uses STB_GLOBAL, STT_FUNC, STV_DEFAULT and SHN_UNDEF
+        """
         st_info_container = Container(bind = 'STB_GLOBAL')
         st_info_container.type = 'STT_FUNC'
         return Container(
