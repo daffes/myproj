@@ -8,7 +8,7 @@
 #-------------------------------------------------------------------------------
 from ..construct import CString
 from ..common.utils import struct_parse, elf_assert
-from enums import *
+
 
 class Section(object):
     """ Base class for ELF sections. Also used for all sections types that have
@@ -67,7 +67,8 @@ class StringTableSection(Section):
             CString(''),
             self.stream,
             stream_pos=table_offset + offset)
-        
+
+
 class SymbolTableSection(Section):
     """ ELF symbol table section. Has an associated StringTableSection that's
         passed in the constructor.
@@ -106,6 +107,7 @@ class SymbolTableSection(Section):
         for i in range(self.num_symbols()):
             yield self.get_symbol(i)
 
+
 class Symbol(object):
     """ Symbol object - representing a single symbol entry from a symbol table
         section.
@@ -116,7 +118,7 @@ class Symbol(object):
     def __init__(self, entry, name):
         self.entry = entry
         self.name = name
-        
+
     def __getitem__(self, name):
         """ Implement dict-like access to entries
         """

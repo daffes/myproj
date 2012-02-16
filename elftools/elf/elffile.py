@@ -12,11 +12,12 @@ from ..common.utils import struct_parse, elf_assert
 from ..construct import ConstructError
 from .structs import ELFStructs
 from .sections import (
-    Section, StringTableSection, SymbolTableSection, NullSection)
+        Section, StringTableSection, SymbolTableSection, NullSection)
 from .relocation import RelocationSection, RelocationHandler
 from .segments import Segment, InterpSegment
 from .enums import ENUM_RELOC_TYPE_i386, ENUM_RELOC_TYPE_x64
 from ..dwarf.dwarfinfo import DWARFInfo, DebugSectionDescriptor, DwarfConfig
+
 
 class ELFFile(object):
     """ Creation: the constructor accepts a stream (file-like object) with the
@@ -39,6 +40,8 @@ class ELFFile(object):
             e_ident_raw:
                 the raw e_ident field of the header
     """
+
+
     def __init__(self, stream):
         self.stream = stream
         self._identify_file()
