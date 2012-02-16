@@ -1,7 +1,7 @@
 #-------------------------------------------------------------------------------
-# elftools: elf/sectionsedit.py
+# elftools: elf/elffileedit.py
 #
-# ELF editable sections
+# ELF editable files
 #
 # Davi Costa (davialcosta@gmail.com)
 # This code is in the public domain
@@ -17,7 +17,7 @@ class ELFFileEdit(ELFFile):
         .symtab and .strtab
     """
     
-    def __init__(self, stream, A=[]):
+    def __init__(self, stream, A=[0]):
         stream.seek(0)
         self.stream = BytesIO()
         self.stream.write(stream.read())
