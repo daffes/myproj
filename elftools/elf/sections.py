@@ -123,3 +123,5 @@ class Symbol(object):
         """ Implement dict-like access to entries
         """
         return self.entry[name]
+
+

@@ -40,8 +40,6 @@ class ELFFile(object):
             e_ident_raw:
                 the raw e_ident field of the header
     """
-
-
     def __init__(self, stream):
         self.stream = stream
         self._identify_file()
@@ -301,3 +299,5 @@ class ELFFile(object):
                 name=section.name,
                 global_offset=section['sh_offset'],
                 size=section['sh_size'])
+
+
